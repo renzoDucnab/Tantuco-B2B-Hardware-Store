@@ -1,0 +1,281 @@
+@extends('layouts.shop')
+
+@section('content')
+<div class="section section-scrollable" style="margin-bottom: 20px;">
+    <div class="container">
+        <div class="section-title d-flex justify-content-between align-items-center">
+            <h3 class="title">{{ $page }}</h3>
+        </div>
+        <div><button class="btn btn-primary btn-sm" id="addAddressBtn" style="margin-top:-30px;padding:5px;background-color:#6571ff;border-color:#6571ff;">Add Address</button></div>
+
+        <table id="b2bAddressTable" class="table-2">
+            <thead>
+                <tr>
+                    <th>Select</th>
+                    <th>Full Address</th>
+                    <th>Notes</th>
+                    <th>Status</th>
+                    <th>Created At</th>
+                </tr>
+            </thead>
+            <tbody>
+            </tbody>
+        </table>
+
+
+    </div>
+</div>
+
+<!-- Address Form Modal -->
+<div class="modal fade" id="addressModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <form id="addressForm">
+            @csrf
+            <div class="modal-content">
+                <div class="modal-header" style="border:0px">
+                    <h5 class="modal-title" id="modalTitle">Add Address</h5>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="addressId" name="id">
+                    <div class="form-group"><label>Street</label><input type="text" name="street" class="form-control" required></div>
+                    <div class="form-group"><label>Barangay</label><input type="text" name="barangay" class="form-control" required></div>
+                    <div class="form-group"><label>City</label><input type="text" name="city" class="form-control" required></div>
+                    <div class="form-group"><label>Province</label><input type="text" name="province" class="form-control" required></div>
+                    <div class="form-group">
+                        <label>Zip Code</label>
+                        <input type="text" name="zip_code" class="form-control" maxlength="4" pattern="\d*" title="Numbers only, max 4 digits">
+                    </div>
+
+
+                    <div class="form-group">
+                        <label>Address Notes</label>
+                        <textarea 
+                            style="color:black;"
+                            name="address_notes" 
+                            class="form-control" 
+                            rows="5" 
+                            placeholder="If the house is inside an alley, please provide detailed directions to the exact address"></textarea>
+                    </div>
+
+
+                    <input type="hidden" name="delivery_address_lat" id="delivery_address_lat">
+                    <input type="hidden" name="delivery_address_lng" id="delivery_address_lng">
+                </div>
+                <div class="modal-footer" style="border:0px">
+                    <button type="submit" class="btn btn-primary">Next</button>
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Map Confirmation Modal -->
+<div class="modal fade" id="mapConfirmModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog modal-dialog-scrollable" role="document">
+        <div class="modal-content border-0 rounded-0">
+            <div class="modal-body p-0">
+                <div id="libremap" style="width:100%; height:400px;"></div>
+                <!-- Coordinates display -->
+                <div class="p-2 bg-light">
+                    <p id="coordDisplay" class="text-center mb-1" style="font-size: 14px; color: #333;">
+                        Drag or tap on the map to adjust your pin.
+                    </p>
+                </div>
+                <div class="p-3 bg-white">
+                    <p class="mb-0">Please confirm this location before submitting your address.</p>
+                </div>
+            </div>
+            <div class="modal-footer bg-light p-2" style="border:0px">
+                <button id="confirmSubmitBtn" class="btn btn-sm btn-success">Confirm & Submit</button>
+                <button class="btn btn-sm btn-secondary" data-dismiss="modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+@endsection
+
+@push('scripts')
+<script>
+    let map, marker, lat, lon;
+    const addressModal = $('#addressModal');
+    const mapConfirmModal = $('#mapConfirmModal');
+    const addressForm = $('#addressForm');
+
+    const table = $('#b2bAddressTable').DataTable({
+        processing: true,
+        serverSide: true,
+        fixedHeader: {
+            header: true
+        },
+        scrollCollapse: true,
+        scrollX: true,
+        scrollY: 600,
+        autoWidth: false,
+        // responsive: true,
+        ajax: '{{ route("b2b.address.index") }}',
+        columns: [{
+                data: 'select',
+                name: 'select',
+                orderable: false,
+                searchable: false
+            },
+            {
+                data: 'full_address',
+                name: 'full_address'
+            },
+            { data: 'address_notes', name: 'address_notes' }, 
+            {
+                data: 'status',
+                name: 'status'
+            },
+            {
+                data: 'created_at',
+                name: 'created_at'
+            }
+        ],
+        createdRow: function(row, data, dataIndex) {
+            $('td', row).eq(0).attr('data-label', 'Select:');
+            $('td', row).eq(1).attr('data-label', 'Address:');
+            $('td', row).eq(2).attr('data-label', 'Notes:');
+            $('td', row).eq(3).attr('data-label', 'Status:');
+            $('td', row).eq(4).attr('data-label', 'Date Created:');
+
+        }
+});
+
+
+
+    $('#addAddressBtn').click(() => {
+        addressForm[0].reset();
+        $('#addressId').val('');
+        $('#modalTitle').text('Add Address');
+        addressModal.modal('show');
+    });
+
+    addressForm.on('submit', function(e) {
+        e.preventDefault();
+
+        const street = $('input[name="street"]').val();
+        const barangay = $('input[name="barangay"]').val();
+        const city = $('input[name="city"]').val();
+        const province = $('input[name="province"]').val();
+        const zip = $('input[name="zip_code"]').val();
+        const address_notes = $('textarea[name="address_notes"]').val();
+        const fullAddress = `${street}, ${barangay}, ${city}, ${province}, ${zip}`;
+
+        $.get('/b2b/geocode', {
+            q: fullAddress
+        }, function(data) {
+            if (data && data.length > 0) {
+                lat = parseFloat(data[0].lat);
+                lon = parseFloat(data[0].lon);
+                $('#delivery_address_lat').val(lat);
+                $('#delivery_address_lng').val(lon);
+
+                addressModal.modal('hide');
+                mapConfirmModal.modal('show');
+
+                mapConfirmModal.on('shown.bs.modal', function() {
+                    $('#libremap').html('');
+                    map = new maplibregl.Map({
+                        container: 'libremap',
+                        style: 'https://tiles.stadiamaps.com/styles/alidade_smooth.json?api_key=275d2e97-15e5-4976-8f40-af02cdeb4b82',
+                        center: [lon, lat],
+                        zoom: 16,
+                        attributionControl: true
+                    });
+
+                    map.addControl(new maplibregl.NavigationControl());
+
+                    // Create draggable marker
+                    marker = new maplibregl.Marker({
+                        color: 'blue',
+                        draggable: true
+                    })
+                    .setLngLat([lon, lat])
+                    .addTo(map);
+                    
+                    function updateCoordDisplay(lat, lng) {
+                        $('#coordDisplay').text(`📍 Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)}`);
+                    }
+                    
+                    // Update lat/lng when the user drags the marker
+                    marker.on('dragend', function() {
+                        const newCoords = marker.getLngLat();
+                        $('#delivery_address_lat').val(newCoords.lat);
+                        $('#delivery_address_lng').val(newCoords.lng);
+                        updateCoordDisplay(newCoords.lat, newCoords.lng);
+                    });
+                
+                    // Allow clicking on the map to move the marker
+                    map.on('click', function(e) {
+                        const coords = e.lngLat;
+                        marker.setLngLat(coords);
+                        $('#delivery_address_lat').val(coords.lat);
+                        $('#delivery_address_lng').val(coords.lng);
+                        updateCoordDisplay(coords.lat, coords.lng);
+                    });
+                
+                    map.resize();
+                    map.setCenter([lon, lat]);
+                });
+            } else {
+                toast('warning', 'Geolocation failed: address not found.');
+            }
+        }).fail(function(jqXHR, textStatus, errorThrown) {
+            alert('Geocoding error: ' + errorThrown);
+        });
+    });
+
+    $('#confirmSubmitBtn').click(() => {
+        const id = $('#addressId').val();
+        const url = id ? `/b2b/address/${id}` : '{{ route("b2b.address.store") }}';
+        const method = id ? 'PUT' : 'POST';
+
+        $.ajax({
+            url: url,
+            method: method,
+            data: addressForm.serialize(),
+            success: function() {
+                mapConfirmModal.modal('hide');
+                table.ajax.reload();
+            },
+            error: function() {
+                toast('warning', 'Failed to save address.');
+            }
+        });
+    });
+
+    $(document).on('change', '.select-address', function() {
+        const addressId = $(this).data('id');
+
+        $.ajax({
+            url: '/b2b/address/set-default',
+            method: 'POST',
+            data: {
+                _token: '{{ csrf_token() }}',
+                id: addressId
+            },
+            success: function() {
+                table.ajax.reload();
+            },
+            error: function() {
+                toast('warning', 'Failed to update default address.');
+            }
+        });
+    });
+
+    document.querySelector('input[name="zip_code"]').addEventListener('input', function() {
+        // Remove all non-digit characters
+        this.value = this.value.replace(/\D/g, '');
+        
+        // Limit to 4 digits
+        if (this.value.length > 4) {
+            this.value = this.value.slice(0, 4);
+        }
+    });
+
+    
+</script>
+@endpush
